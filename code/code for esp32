@@ -1,0 +1,276 @@
+#include <WiFi.h>
+#include <WebServer.h>
+
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SH110X.h>
+
+#include <PZEM004Tv30.h>
+
+// ================= WIFI =================
+const char* ssid = "YOUR WIFI";
+const char* password = "PASSWORD";
+
+// ================= OLED =================
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// ================= PZEM =================
+PZEM004Tv30 pzem(Serial2, 16, 17);
+
+// ================= RELAY =================
+#define RELAY_PIN 26
+
+// ================= WEB SERVER =================
+WebServer server(80);
+
+// ================= VARIABLES =================
+bool relayState = false;
+
+float voltage = 0;
+float current = 0;
+float power = 0;
+float energy = 0;
+float frequency = 0;
+float pf = 0;
+
+// =====================================================
+// OLED DISPLAY
+// =====================================================
+void updateOLED()
+{
+  display.clearDisplay();
+
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+
+  display.setCursor(0,0);
+  display.println("ESP32 POWER");
+
+  display.print("LOAD: ");
+
+  if(relayState)
+    display.println("ON");
+  else
+    display.println("OFF");
+
+  display.print("V: ");
+  display.print(voltage,1);
+  display.println("V");
+
+  display.print("I: ");
+  display.print(current,2);
+  display.println("A");
+
+  display.print("P: ");
+  display.print(power,1);
+  display.println("W");
+
+  display.display();
+}
+
+// =====================================================
+// READ PZEM
+// =====================================================
+void readPZEM()
+{
+  voltage = pzem.voltage();
+  current = pzem.current();
+  power = pzem.power();
+  energy = pzem.energy();
+  frequency = pzem.frequency();
+  pf = pzem.pf();
+
+  if(isnan(voltage)) voltage = 0;
+  if(isnan(current)) current = 0;
+  if(isnan(power)) power = 0;
+  if(isnan(energy)) energy = 0;
+  if(isnan(frequency)) frequency = 0;
+  if(isnan(pf)) pf = 0;
+}
+
+// =====================================================
+// HTML PAGE
+// =====================================================
+String webpage()
+{
+  String page = "";
+
+  page += "<html><head>";
+  page += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  page += "<meta http-equiv='refresh' content='2'>";
+
+  page += "<style>";
+
+  page += "body{font-family:Arial;text-align:center;background:#f2f2f2;}";
+
+  page += ".card{background:white;padding:20px;margin:10px;border-radius:15px;";
+  page += "box-shadow:0 2px 10px rgba(0,0,0,0.2);}";
+
+  page += ".btn{padding:20px 40px;font-size:25px;border:none;";
+  page += "border-radius:10px;color:white;}";
+
+  page += ".on{background:green;}";
+  page += ".off{background:red;}";
+
+  page += "</style></head><body>";
+
+  page += "<h1>ESP32 POWER MONITOR</h1>";
+
+  if(relayState)
+  {
+    page += "<h2>LOAD : ON</h2>";
+    page += "<a href='/off'><button class='btn off'>TURN OFF</button></a>";
+  }
+  else
+  {
+    page += "<h2>LOAD : OFF</h2>";
+    page += "<a href='/on'><button class='btn on'>TURN ON</button></a>";
+  }
+
+  page += "<div class='card'><h2>Voltage</h2><h1>";
+  page += String(voltage,1);
+  page += " V</h1></div>";
+
+  page += "<div class='card'><h2>Current</h2><h1>";
+  page += String(current,2);
+  page += " A</h1></div>";
+
+  page += "<div class='card'><h2>Power</h2><h1>";
+  page += String(power,1);
+  page += " W</h1></div>";
+
+  page += "<div class='card'><h2>Energy</h2><h1>";
+  page += String(energy,3);
+  page += " kWh</h1></div>";
+
+  page += "<div class='card'><h2>Frequency</h2><h1>";
+  page += String(frequency,1);
+  page += " Hz</h1></div>";
+
+  page += "<div class='card'><h2>Power Factor</h2><h1>";
+  page += String(pf,2);
+  page += "</h1></div>";
+
+  page += "</body></html>";
+
+  return page;
+}
+
+// =====================================================
+// ROOT
+// =====================================================
+void handleRoot()
+{
+  readPZEM();
+
+  updateOLED();
+
+  server.send(200, "text/html", webpage());
+}
+
+// =====================================================
+// RELAY ON
+// =====================================================
+void handleON()
+{
+  relayState = true;
+
+  digitalWrite(RELAY_PIN, LOW);
+
+  handleRoot();
+}
+
+// =====================================================
+// RELAY OFF
+// =====================================================
+void handleOFF()
+{
+  relayState = false;
+
+  digitalWrite(RELAY_PIN, HIGH);
+
+  handleRoot();
+}
+
+// =====================================================
+// SETUP
+// =====================================================
+void setup()
+{
+  Serial.begin(115200);
+
+  // ================= RELAY =================
+  pinMode(RELAY_PIN, OUTPUT);
+
+  digitalWrite(RELAY_PIN, HIGH);
+
+  // ================= OLED =================
+  Wire.begin(21,22);
+
+  display.begin(0x3C, true);
+
+  display.clearDisplay();
+
+  display.setTextSize(1);
+
+  display.setTextColor(SH110X_WHITE);
+
+  display.setCursor(0,0);
+
+  display.println("Connecting WiFi");
+
+  display.display();
+
+  // ================= WIFI =================
+  WiFi.begin(ssid, password);
+
+  while(WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi Connected");
+
+  Serial.println(WiFi.localIP());
+
+  // ================= OLED =================
+  display.clearDisplay();
+
+  display.setCursor(0,0);
+
+  display.println("WiFi Connected");
+  display.println("");
+
+  display.print("IP: ");
+
+  display.println(WiFi.localIP());
+
+  display.display();
+
+  delay(3000);
+
+  // ================= SERVER =================
+  server.on("/", handleRoot);
+
+  server.on("/on", handleON);
+
+  server.on("/off", handleOFF);
+
+  server.begin();
+
+  Serial.println("Server Started");
+}
+
+// =====================================================
+// LOOP
+// =====================================================
+void loop()
+{
+  server.handleClient();
+}
